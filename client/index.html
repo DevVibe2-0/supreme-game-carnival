@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Triqui Online</title>
+  <style>
+    body { font-family: Arial; text-align: center; margin-top: 30px; }
+    #board { display: none; grid-template-columns: repeat(3, 100px); gap: 5px; justify-content: center; margin-top: 20px; }
+    .cell { width: 100px; height: 100px; font-size: 2em; display: flex; align-items: center; justify-content: center; background: #eee; cursor: pointer; }
+    .cell.taken { background: #ccc; cursor: not-allowed; }
+    #status { margin-top: 20px; font-size: 1.2em; }
+    #menu { margin-bottom: 20px; }
+    input[type="text"] { padding: 5px; font-size: 1em; width: 200px; }
+    button { padding: 8px 15px; font-size: 1em; margin: 5px; cursor: pointer; }
+  </style>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body>
+  <h1>Triqui (Tres en Raya)</h1>
+
+  <div id="menu">
+    <select id="gameType">
+      <option value="triqui">Triqui</option>
+      <option value="ppt">Piedra, Papel o Tijera</option>
+    </select>
+    <br />
+    <button onclick="createGame()">Crear partida</button>
+    <input type="text" id="gameIdInput" placeholder="Código de partida" />
+    <button onclick="joinGame()">Unirse</button>
+  </div>
+
+  <div id="status">Esperando acción...</div>
+  <div id="board"></div>
+
+  <script>
+    const socket = io("http://localhost:3000"); // Cambia si tu backend está en otro host o puerto
+    const boardEl = document.getElementById("board");
+    const statusEl = document.getElementById("status");
+
+    let gameId = null;
+    let mySymbol = null;
+    let board = Array(9).fill(null);
+
+    function createGame() {
+      const gameType = document.getElementById("gameType").value;
+      socket.emit("createGame", { gameType });
+    }
+
+    function joinGame() {
+      const input = document.getElementById("gameIdInput").value.trim();
+      const gameType = document.getElementById("gameType").value;
+      console.log("Intentando unirse a la partida con ID:", input, "tipo:", gameType);
+      if (input) {
+        gameId = input;
+        socket.emit("joinGame", { gameId, gameType });
+        statusEl.textContent = `Intentando unirse a la partida ${gameId}...`;
+      }
+    }
+
+socket.on("gameCreated", (data) => {
+  console.log("Evento gameCreated recibido:", data);
+  gameId = data.id || data.gameId;
+  statusEl.textContent = `Juego creado. Comparte el código: ${gameId}`;
+});
+
+socket.on("startGame", ({ symbol, game }) => {
+  if (!game?.board && game.type !== 'ppt') { // Solo validas board para triqui
+    console.error("No se recibió el tablero correctamente:", game);
+    statusEl.textContent = "Error al iniciar la partida.";
+    return;
+  }
+
+  console.log("Juego iniciado. Símbolo:", symbol, "Juego:", game);
+  mySymbol = symbol;
+  board = game.board || []; // solo triqui tiene board
+
+  if (game.type === "triqui") {
+    statusEl.textContent = `Juego iniciado (Triqui). Tú eres: ${symbol}`;
+    boardEl.style.display = "grid";
+    renderBoard();
+  } else if (game.type === "ppt") {
+    statusEl.textContent = `Juego iniciado (Piedra, Papel o Tijera). Tú eres: ${symbol}`;
+    boardEl.style.display = "none";
+    showPPTOptions(); // aquí dibujas botones de piedra/papel/tijera
+  }
+});
+
+socket.on("moveMade", ({ board: updatedBoard, nextTurn }) => {
+      board = updatedBoard;
+      renderBoard();
+      statusEl.textContent = `Turno: ${nextTurn}`;
+    });
+
+socket.on("gameOver", ({ winner }) => {
+      renderBoard();
+      if (winner === mySymbol) {
+        statusEl.textContent = "¡Ganaste! 🎉";
+      } else if (winner) {
+        statusEl.textContent = "Perdiste 😢";
+      } else {
+        statusEl.textContent = "Empate 🤝";
+      }
+    });
+socket.on("updateGame", ({ gameId: id, game }) => {
+  console.log("Update recibido:", game);
+
+  board = game.board; // Actualizas el tablero
+  renderBoard();
+
+  if (game.winner) {
+    if (game.winner === mySymbol) {
+      statusEl.textContent = "¡Ganaste! 🎉";
+    } else {
+      statusEl.textContent = "Perdiste 😢";
+    }
+  } else {
+    statusEl.textContent = `Turno: ${game.currentPlayer}`;
+  }
+});
+
+socket.on('pptResult', ({ yourMove, opponentMove, winner }) => {
+  let resultMessage = "";
+ console.log("Resultado de PPT:", yourMove, opponentMove, winner);
+  if (winner === null) {
+    resultMessage = `Empate! Ambos jugaron ${yourMove}.`;
+  } else if (winner === mySymbol) {
+    resultMessage = `¡Ganaste! Jugaste ${yourMove}, el oponente jugó ${opponentMove}. 🎉`;
+  } else {
+    resultMessage = `Perdiste. Jugaste ${yourMove}, el oponente jugó ${opponentMove}. 😢`;
+  }
+
+  // Actualiza el estado o muestra el resultado
+  statusEl.textContent = resultMessage;
+});
+
+socket.on('resetGame', () => {
+  console.log('El juego de PPT ha sido reiniciado. ¡Juega de nuevo!');
+
+  // Limpiar los movimientos de PPT (no el tablero de triqui)
+  // game.moves = {}; // Limpiar el estado de las jugadas de PPT
+
+  // Actualizar la UI (sin afectar el tablero de triqui)
+  statusEl.textContent = 'Juega de nuevo! hasta obtener un ganador.';
+});
+   
+
+
+    function renderBoard() {
+      boardEl.innerHTML = "";
+      console.log("Renderizando el tablero:", board);
+      board.forEach((cell, i) => {
+        const div = document.createElement("div");
+        div.classList.add("cell");
+        if (cell) {
+          div.textContent = cell;
+          div.classList.add("taken");
+        } else {
+          div.addEventListener("click", () => makeMove(i));
+        }
+        boardEl.appendChild(div);
+      });
+    }
+
+    function makeMove(index) {
+      console.log("Intentando hacer movimiento en la celda:", index);
+      console.log("mysimbol:", mySymbol);
+      if (board[index]) return;
+      socket.emit("makeMove", { gameId, index, symbol: mySymbol });
+    }
+    function showPPTOptions() {
+      boardEl.innerHTML = `
+        <button onclick="makePPTMove('piedra')">🪨 Piedra</button>
+        <button onclick="makePPTMove('papel')">📄 Papel</button>
+        <button onclick="makePPTMove('tijera')">✂️ Tijera</button>
+      `;
+      boardEl.style.display = "flex";
+      boardEl.style.justifyContent = "center";
+      boardEl.style.gap = "10px";
+    }
+    function makePPTMove(move) {
+      console.log("Elegiste:", move);
+      socket.emit("makePPTMove", { gameId, move, symbol: mySymbol });
+    }
+
+
+  </script>
+</body>
+</html>
